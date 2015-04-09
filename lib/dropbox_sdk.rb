@@ -143,6 +143,9 @@ class DropboxSessionBase # :nodoc:
 
   attr_writer :locale
 
+  # dropbox for biz support
+  attr_accessor :as_team_member
+
   def initialize(locale)
     @locale = locale
   end
@@ -176,7 +179,14 @@ class DropboxSessionBase # :nodoc:
     params ||= {}
     assert_authorized
     uri = build_url_with_params(path, params, content_server)
-    do_http(uri, Net::HTTP::Get.new(uri.request_uri))
+
+    headers = if @as_team_member
+      {'X-Dropbox-Perform-As-Team-Member' => @as_team_member,}
+    else
+      nil
+    end
+
+    do_http(uri, Net::HTTP::Get.new(uri.request_uri, headers))
   end
 
   def do_http_with_body(uri, request, body)
@@ -206,13 +216,34 @@ class DropboxSessionBase # :nodoc:
     assert_authorized
     uri = build_url(path, content_server)
     params['locale'] = @locale
+
+    if @as_team_member
+      headers = headers || {}
+      headers['X-Dropbox-Perform-As-Team-Member'] = @as_team_member
+    end
+
     do_http_with_body(uri, Net::HTTP::Post.new(uri.request_uri, headers), params)
+  end
+
+  def do_team_post path, params={}, headers = nil
+    assert_authorized
+    uri = build_url(path, false)
+    request = Net::HTTP::Post.new(uri.request_uri, headers)
+    request.body = JSON.dump params
+    request['Content-Type'] = 'application/json'
+    do_http uri, request
   end
 
   def do_put(path, params=nil, headers=nil, body=nil, content_server=false)  # :nodoc:
     params ||= {}
     assert_authorized
     uri = build_url_with_params(path, params, content_server)
+
+    if @as_team_member
+      headers = headers || {}
+      headers['X-Dropbox-Perform-As-Team-Member'] = @as_team_member
+    end
+
     do_http_with_body(uri, Net::HTTP::Put.new(uri.request_uri, headers), body)
   end
 end
@@ -740,6 +771,15 @@ class DropboxClient
       #sandbox is the URL root component that indicates this
       @root = "sandbox"
     end
+  end
+
+  # dropbox for biz support
+  def as_team_member= as_team_member
+    @session.as_team_member = as_team_member
+  end
+
+  def as_team_member
+    @session.as_team_member
   end
 
   # Returns some information about the current user's Dropbox account (the "current user"
@@ -1367,6 +1407,19 @@ class DropboxClient
               'root' => @root}
 
     response = @session.do_post "/fileops/copy", params
+    Dropbox::parse_response(response)
+  end
+
+  def team_get_info
+    response = @session.do_team_post "/team/get_info"
+    Dropbox::parse_response(response)
+  end
+
+  def team_members_list limit=nil, cursor=nil
+    params = {}
+    params['limit'] = limit if limit
+    params['curson'] = cursor if cursor
+    response = @session.do_team_post "/team/members/list", params
     Dropbox::parse_response(response)
   end
 
